@@ -8,6 +8,8 @@ using System.Collections.Immutable;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.CodeAnalysis.Editing;
+using System.Linq;
+using Microsoft.CodeAnalysis.Rename;
 
 namespace Analyzer1
 {
@@ -25,85 +27,141 @@ namespace Analyzer1
 			if (root.FindNode(context.Span, getInnermostNodeForTie: true) is SyntaxNode node)
 			{
 				string title = "Convert to foreach";
+
 				var codeAction = CodeAction.Create(
 					title,
 					cancellationToken => ConvertToForeachLoop(context.Document, node, cancellationToken),
-					equivalenceKey: title);
+					equivalenceKey: title
+				);
 
 				context.RegisterCodeFix(codeAction, context.Diagnostics);
 			}
 		}
 
-		private static async Task<Document> ConvertToForeachLoop(Document document, SyntaxNode nodeToFix, CancellationToken cancellationToken)
+		private static async Task<Solution> ConvertToForeachLoop(Document document, SyntaxNode nodeToFix, CancellationToken cancellationToken)
 		{
 			var semanticModel = await document.GetSemanticModelAsync(cancellationToken).ConfigureAwait(false);
 
 			if (
-				ForEachExtensionAnalyzer.TryGetForEachExtensionParts(
-					semanticModel.GetOperation(nodeToFix),
-					out IInvocationOperation invocation,
-					out IOperation source,
-					out IDelegateCreationOperation action
-				)
+				TryGetForEachExtensionParts(nodeToFix, semanticModel, out var invocation, out var source, out var parameters, out var lambda)
 			)
 			{
-				if (
-					action.Target is IAnonymousFunctionOperation { Symbol: { Parameters: { Length: 1 } parameters, ReturnsVoid: true } } lambda
-				)
-				{
-					IParameterSymbol parameter = parameters[0];
-					IBlockOperation body = lambda.Body;
-
-					if (parameter.Name == "_")
-					{
-						// how do i rename the parameter within the current document scope?
-					}
-
-					StatementSyntax bodyStatement = null;
-					if (body.Syntax is ExpressionSyntax bodyExpression)
-					{
-						bodyStatement = SyntaxFactory.Block(SyntaxFactory.ExpressionStatement(bodyExpression));
-					}
-					else if (body.Syntax is StatementSyntax statementBlock)
-					{
-						bodyStatement = statementBlock;
-					}
-
-					if (invocation.Parent is IExpressionStatementOperation containingStatement)
-					{
-						nodeToFix = containingStatement.Syntax;
-					}
-
-					TypeSyntax typeSyntax = SyntaxFactory.ParseTypeName(
-						parameter.Type.ToMinimalDisplayString(
-							semanticModel, 
-							parameter.Type.Locations[0].SourceSpan.Start, 
-							SymbolDisplayFormat.MinimallyQualifiedFormat
-						)
-					);
-
-					SyntaxNode newNode = SyntaxFactory.ForEachStatement(
-						typeSyntax, 
-						parameter.Name, 
-						source.Syntax as ExpressionSyntax,
-						bodyStatement
-					)
-						.WithTriviaFrom(nodeToFix);
-					
-					var editor = await DocumentEditor.CreateAsync(document, cancellationToken).ConfigureAwait(false);
+				DocumentId documentId = document.Id;
 				
-					editor.ReplaceNode(nodeToFix, newNode);
-					
-					return editor.GetChangedDocument();
+				if (parameters[0].Name == "_")
+				{
+					SyntaxAnnotation marker = new SyntaxAnnotation("marker");
+					SolutionEditor solutionEditor = new SolutionEditor(document.Project.Solution);
+					var docEditor = await solutionEditor.GetDocumentEditorAsync(documentId);
+					docEditor.ReplaceNode(nodeToFix, nodeToFix.WithAdditionalAnnotations(marker));
+					docEditor.GetChangedDocument();
+					Solution solution = solutionEditor.GetChangedSolution();
+					document = solution.GetDocument(documentId);
+					nodeToFix = (await document.GetSyntaxRootAsync()).GetAnnotatedNodes(marker.Kind).FirstOrDefault();
+					semanticModel = await document.GetSemanticModelAsync(cancellationToken).ConfigureAwait(false);
+
+					if (
+						nodeToFix !=null && 
+						TryGetForEachExtensionParts(nodeToFix, semanticModel, out invocation, out source, out parameters, out lambda)
+					)
+					{
+						solution = await Renamer.RenameSymbolAsync(
+							solution,
+							parameters[0],
+							new SymbolRenameOptions(),
+							"item",
+							cancellationToken
+						);
+
+						document = solution.GetDocument(documentId);
+						nodeToFix = (await document.GetSyntaxRootAsync()).GetAnnotatedNodes(marker.Kind).FirstOrDefault();
+						semanticModel = await document.GetSemanticModelAsync(cancellationToken).ConfigureAwait(false);
+
+						if (
+							nodeToFix == null ||
+							!TryGetForEachExtensionParts(nodeToFix, semanticModel, out invocation, out source, out parameters, out lambda)
+						)
+						{
+							return solutionEditor.OriginalSolution;
+						}
+					}
 				}
 
-				return document;
+				IBlockOperation body = lambda.Body;
+
+				StatementSyntax bodyStatement = null;
+				if (body.Syntax is ExpressionSyntax bodyExpression)
+				{
+					bodyStatement = SyntaxFactory.Block(SyntaxFactory.ExpressionStatement(bodyExpression));
+				}
+				else if (body.Syntax is StatementSyntax statementBlock)
+				{
+					bodyStatement = statementBlock;
+				}
+
+				if (invocation.Parent is IExpressionStatementOperation containingStatement)
+				{
+					nodeToFix = containingStatement.Syntax;
+				}
+
+				IParameterSymbol parameter = parameters[0];
+
+				TypeSyntax typeSyntax = SyntaxFactory.ParseTypeName(
+					parameter.Type.ToMinimalDisplayString(
+						semanticModel,
+						parameter.Type.Locations[0].SourceSpan.Start,
+						SymbolDisplayFormat.MinimallyQualifiedFormat
+					)
+				);
+
+				SyntaxNode newNode = SyntaxFactory.ForEachStatement(
+					typeSyntax,
+					parameter.Name,
+					source.Syntax as ExpressionSyntax,
+					bodyStatement
+				)
+					.WithTriviaFrom(nodeToFix);
+
+
+				SolutionEditor solutionEditor2 = new SolutionEditor(document.Project.Solution);
+				DocumentEditor editor = await solutionEditor2.GetDocumentEditorAsync(documentId, cancellationToken).ConfigureAwait(false);
+
+				editor.ReplaceNode(nodeToFix, newNode);
+
+				return solutionEditor2.GetChangedSolution();
+
 			}
 			else
 			{
-				return document;
+				return document.Project.Solution;
 			}
 		}
 
+		private static bool TryGetForEachExtensionParts(
+			SyntaxNode nodeToFix, 
+			SemanticModel semanticModel, 
+			out IInvocationOperation invocation, 
+			out IOperation source, 
+			out ImmutableArray<IParameterSymbol> parameters, 
+			out IAnonymousFunctionOperation lambda
+		)
+		{
+			lambda = null;
+			if (
+				ForEachExtensionAnalyzer.TryGetForEachExtensionParts(
+					semanticModel.GetOperation(nodeToFix),
+					out invocation,
+					out source,
+					out IDelegateCreationOperation action
+				) &&
+				action.Target is IAnonymousFunctionOperation { Symbol: { Parameters: { Length: 1 } parameterSymbols, ReturnsVoid: true } } anonymousFunctionOperation )
+			{
+				parameters = parameterSymbols;
+				lambda = anonymousFunctionOperation;
+				return true;
+			}
+			return false;
+
+		}
 	}
 }

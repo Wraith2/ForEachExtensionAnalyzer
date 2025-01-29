@@ -35,8 +35,6 @@ using System;
 using System.Linq;
 using System.Collections.Generic;
 
-@@ExtensionFragment@@
-
 namespace Test
 {
     using Company.Core;
@@ -50,7 +48,9 @@ namespace Test
             @@Statements@@
         }
     }
-}";
+}
+
+@@ExtensionFragment@@";
 		private static string ReplaceFragments(string statement, params (string Name, string Value)[] pairs)
         {
             string output = null;
@@ -68,9 +68,9 @@ namespace Test
             string input = @"values.ForEach(_ => list.Add(_));";
 
             string output = @"
-            foreach (string _ in values)
+            foreach (string item in values)
             {
-                list.Add(_);
+                list.Add(item);
             }";
 
             var replacements = new[] {
@@ -82,7 +82,7 @@ namespace Test
 			output = ReplaceFragments(output, replacements);
 
 			DiagnosticResult[] diagnostics = new DiagnosticResult[] { 
-                VerifyVar.Diagnostic(ForEachExtensionAnalyzer.AN01).WithLocation(36, 13) 
+                VerifyVar.Diagnostic(ForEachExtensionAnalyzer.AN01).WithLocation(17, 13) 
             };
 			await VerifyVar.VerifyAnalyzerAsync(input, diagnostics);
 
@@ -94,8 +94,7 @@ namespace Test
 		{
 			string input = @"values.ForEach((string str) => list.Add(str));";
 
-			string output = @"
-            foreach (string str in values)
+			string output = @"foreach (string str in values)
             {
                 list.Add(str);
             }";
@@ -109,7 +108,7 @@ namespace Test
 			output = ReplaceFragments(output, replacements);
 
 			DiagnosticResult[] diagnostics = new DiagnosticResult[] {
-				VerifyVar.Diagnostic(ForEachExtensionAnalyzer.AN01).WithLocation(36, 13)
+				VerifyVar.Diagnostic(ForEachExtensionAnalyzer.AN01).WithLocation(17, 13)
 			};
 			await VerifyVar.VerifyAnalyzerAsync(input, diagnostics);
 
@@ -126,9 +125,9 @@ namespace Test
         );";
 
 			string output = @"
-            foreach (string _ in values)
+            foreach (string item in values)
             {
-                list.Add(_);
+                list.Add(item);
             }";
 
 			var replacements = new[] {
@@ -140,7 +139,7 @@ namespace Test
 			output = ReplaceFragments(output, replacements);
 
 			DiagnosticResult[] diagnostics = new DiagnosticResult[] {
-				VerifyVar.Diagnostic(ForEachExtensionAnalyzer.AN01).WithLocation(36, 13)
+				VerifyVar.Diagnostic(ForEachExtensionAnalyzer.AN01).WithLocation(17, 13)
 			};
 			await VerifyVar.VerifyAnalyzerAsync(input, diagnostics);
 
