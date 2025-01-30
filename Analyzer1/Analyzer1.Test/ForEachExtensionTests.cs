@@ -63,7 +63,7 @@ namespace Test
         } 
 
 		[TestMethod]
-        public async Task BasicInferredExpression()
+        public async Task InferredExpressionWithRename()
         {
             string input = @"values.ForEach(_ => list.Add(_));";
 
@@ -90,7 +90,7 @@ namespace Test
 		}
 
 		[TestMethod]
-		public async Task BasicExplicitExpression()
+		public async Task ExplicitExpressionNoRename()
 		{
 			string input = @"values.ForEach((string str) => list.Add(str));";
 
@@ -116,7 +116,7 @@ namespace Test
 		}
 
 		[TestMethod]
-		public async Task BasicInferredStatement()
+		public async Task InferredStatementWithRename()
 		{
 			string input = @"values.ForEach(_ => 
             {
@@ -146,7 +146,128 @@ namespace Test
 			await VerifyFix.VerifyCodeFixAsync(input, diagnostics, output);
 		}
 
+		[TestMethod]
+		public async Task InferredStatementNoRename()
+		{
+			string input = @"values.ForEach(item => 
+            {
+                list.Add(item);
+            }
+        );";
 
-   
-    }
+			string output = @"
+            foreach (string item in values)
+            {
+                list.Add(item);
+            }";
+
+			var replacements = new[] {
+				(nameof(TemplateFragment), TemplateFragment),
+				(nameof(ExtensionFragment), ExtensionFragment),
+			};
+
+			input = ReplaceFragments(input, replacements);
+			output = ReplaceFragments(output, replacements);
+
+			DiagnosticResult[] diagnostics = new DiagnosticResult[] {
+				VerifyVar.Diagnostic(ForEachExtensionAnalyzer.AN01).WithLocation(17, 13)
+			};
+			await VerifyVar.VerifyAnalyzerAsync(input, diagnostics);
+
+			await VerifyFix.VerifyCodeFixAsync(input, diagnostics, output);
+		}
+
+		[TestMethod]
+		public async Task ExplicitStatementWithRename()
+		{
+			string input = @"values.ForEach((string _) => 
+            {
+                list.Add(_);
+            }
+        );";
+
+			string output = @"
+            foreach (string item in values)
+            {
+                list.Add(item);
+            }";
+
+			var replacements = new[] {
+				(nameof(TemplateFragment), TemplateFragment),
+				(nameof(ExtensionFragment), ExtensionFragment),
+			};
+
+			input = ReplaceFragments(input, replacements);
+			output = ReplaceFragments(output, replacements);
+
+			DiagnosticResult[] diagnostics = new DiagnosticResult[] {
+				VerifyVar.Diagnostic(ForEachExtensionAnalyzer.AN01).WithLocation(17, 13)
+			};
+			await VerifyVar.VerifyAnalyzerAsync(input, diagnostics);
+
+			await VerifyFix.VerifyCodeFixAsync(input, diagnostics, output);
+		}
+
+		[TestMethod]
+		public async Task ExplicitStatementNoRename()
+		{
+			string input = @"values.ForEach((string item) => 
+            {
+                list.Add(item);
+            }
+        );";
+
+			string output = @"
+            foreach (string item in values)
+            {
+                list.Add(item);
+            }";
+
+			var replacements = new[] {
+				(nameof(TemplateFragment), TemplateFragment),
+				(nameof(ExtensionFragment), ExtensionFragment),
+			};
+
+			input = ReplaceFragments(input, replacements);
+			output = ReplaceFragments(output, replacements);
+
+			DiagnosticResult[] diagnostics = new DiagnosticResult[] {
+				VerifyVar.Diagnostic(ForEachExtensionAnalyzer.AN01).WithLocation(17, 13)
+			};
+			await VerifyVar.VerifyAnalyzerAsync(input, diagnostics);
+
+			await VerifyFix.VerifyCodeFixAsync(input, diagnostics, output);
+		}
+
+		[TestMethod]
+		public async Task ChainedExplicitStatementNoRename()
+		{
+			string input = @"values.Distinct().ForEach((string item) => 
+            {
+                list.Add(item);
+            }
+        );";
+
+			string output = @"
+            foreach (string item in values.Distinct())
+            {
+                list.Add(item);
+            }";
+
+			var replacements = new[] {
+				(nameof(TemplateFragment), TemplateFragment),
+				(nameof(ExtensionFragment), ExtensionFragment),
+			};
+
+			input = ReplaceFragments(input, replacements);
+			output = ReplaceFragments(output, replacements);
+
+			DiagnosticResult[] diagnostics = new DiagnosticResult[] {
+				VerifyVar.Diagnostic(ForEachExtensionAnalyzer.AN01).WithLocation(17, 13)
+			};
+			await VerifyVar.VerifyAnalyzerAsync(input, diagnostics);
+
+			await VerifyFix.VerifyCodeFixAsync(input, diagnostics, output);
+		}
+	}
 }
